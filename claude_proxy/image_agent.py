@@ -28,31 +28,27 @@ ANALYZE_IMAGE_TOOL = {
     "function": {
         "name": "analyzeImage",
         "description": (
-            "View and analyze image(s). You MUST call this tool whenever "
-            "the conversation contains [Image #N] references. "
-            "Returns a detailed text description of the image content."
+            "MANDATORY tool for viewing images. You CANNOT see images directly — "
+            "[Image #N] placeholders are opaque to you. The ONLY way to see image "
+            "content is by calling this tool. You MUST call analyzeImage BEFORE "
+            "writing ANY response when the latest user message contains [Image #N]. "
+            "NEVER describe, guess, or comment on image content without calling this tool first."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "imageId": {
                     "type": "array",
-                    "description": "Array of image IDs from [Image #N] placeholders in the conversation",
+                    "description": "Image IDs to analyze — extract from [Image #N] placeholders (e.g. [Image #1] → \"1\")",
                     "items": {"type": "string"},
                 },
                 "task": {
                     "type": "string",
-                    "description": (
-                        "Specific analysis task based on the user's question. "
-                        "Be detailed about what information you need from the image"
-                    ),
+                    "description": "What to look for in the image, based on conversation context",
                 },
                 "context": {
                     "type": "string",
-                    "description": (
-                        "Brief summary of the conversation context and what the user "
-                        "is trying to accomplish, so the vision model understands the broader intent"
-                    ),
+                    "description": "Brief conversation context so the vision model knows what to focus on",
                 },
             },
             "required": ["imageId", "task"],
@@ -61,16 +57,14 @@ ANALYZE_IMAGE_TOOL = {
 }
 
 IMAGE_AGENT_SYSTEM_PROMPT = (
-    "Images in this conversation are shown as [Image #N] placeholders. "
-    "To see or analyze any image, you MUST call the analyzeImage tool with the correct imageId.\n"
-    "When calling analyzeImage:\n"
-    "- Pass the imageId(s) from the [Image #N] placeholders\n"
-    "- Write a detailed task description explaining what information you need "
-    "from the image based on the user's question\n"
-    "- Include a context parameter summarizing the user's overall question and intent "
-    "so the vision model understands what to focus on\n"
-    "Never attempt to describe, interpret, or guess about image content without first "
-    "calling analyzeImage. Always call the tool before responding about any image."
+    "CRITICAL INSTRUCTION — IMAGE HANDLING:\n"
+    "You CANNOT see images. All images are replaced with [Image #N] placeholders which are OPAQUE to you.\n"
+    "When the latest user message contains [Image #N], you MUST call the `analyzeImage` tool "
+    "as your FIRST action BEFORE generating any text response.\n"
+    "- You have NO ability to see, interpret, or guess what is in an image without calling analyzeImage.\n"
+    "- If you respond about an image without calling analyzeImage first, your response WILL be wrong.\n"
+    "- Call analyzeImage with ALL image IDs from the latest message.\n"
+    "This is non-negotiable. ALWAYS call analyzeImage when [Image #N] is present."
 )
 
 VISION_SYSTEM_PROMPT = (
@@ -177,7 +171,7 @@ def strip_and_cache_images(body: dict, session_id: str) -> dict:
                 _image_cache.store(session_id, key, block["source"])
                 new_content.append({
                     "type": "text",
-                    "text": f'[Image #{counter}](call analyzeImage with imageId "{counter}" to view this image)',
+                    "text": f'[Image #{counter}] — YOU CANNOT SEE THIS IMAGE. Call analyzeImage(imageId=["{counter}"]) to view it.',
                 })
                 counter += 1
 
@@ -189,7 +183,7 @@ def strip_and_cache_images(body: dict, session_id: str) -> dict:
                         _image_cache.store(session_id, key, item["source"])
                         new_items.append({
                             "type": "text",
-                            "text": f'[Image #{counter}](call analyzeImage with imageId "{counter}" to view this image)',
+                            "text": f'[Image #{counter}] — YOU CANNOT SEE THIS IMAGE. Call analyzeImage(imageId=["{counter}"]) to view it.',
                         })
                         counter += 1
                     else:

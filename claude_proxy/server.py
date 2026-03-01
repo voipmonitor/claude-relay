@@ -272,7 +272,15 @@ def _serialize_for_counting(body: dict) -> str:
                     parts.append(json.dumps(block.get("input", {}), ensure_ascii=False))
                 elif bt == "tool_result":
                     sub = block.get("content", "")
-                    parts.append(sub if isinstance(sub, str) else json.dumps(sub, ensure_ascii=False))
+                    if isinstance(sub, str):
+                        parts.append(sub)
+                    elif isinstance(sub, list):
+                        for sb in sub:
+                            if isinstance(sb, dict):
+                                if sb.get("type") == "text":
+                                    parts.append(sb.get("text", ""))
+                                elif sb.get("type") == "image":
+                                    parts.append("[image]")  # ~1600 tokens per image, rough estimate
                 elif bt == "thinking":
                     parts.append(block.get("thinking", ""))
 
@@ -307,6 +315,14 @@ async def handle_count_tokens(request: web.Request) -> web.Response:
     text = _serialize_for_counting(body)
     enc = _get_tiktoken()
     count = len(enc.encode(text))
+    # Debug: log what we're counting
+    num_msgs = len(body.get("messages", []))
+    num_tools = len(body.get("tools", []))
+    sys_len = len(body.get("system", "")) if isinstance(body.get("system"), str) else sum(
+        len(b.get("text", "")) for b in body.get("system", []) if isinstance(b, dict)
+    )
+    log.debug("count_tokens: msgs=%d tools=%d system=%d text_len=%d → %d tokens",
+              num_msgs, num_tools, sys_len, len(text), count)
     return web.json_response({"input_tokens": count})
 
 

@@ -203,6 +203,7 @@ async def convert_openai_stream_to_anthropic(
             if thinking_started and current_index >= 0 and not text_started:
                 log.info("%sconvert_stream: closing thinking block idx=%d (%d chars total)", _r, current_index, thinking_chars)
                 yield _build_content_block_stop(current_index)
+                thinking_started = False  # prevent double-close in tool_calls section
 
             if not text_started:
                 text_started = True
