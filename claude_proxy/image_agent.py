@@ -1,5 +1,6 @@
 """Image agent: strip/cache images, intercept analyzeImage, call vision model."""
 
+import asyncio
 import json
 import time
 import logging
@@ -369,25 +370,39 @@ async def image_agent_stream(
     log.info("%simage_agent: calling vision model=%s url=%s images=%d",
              _r, config.vision_model, config.vision_url, len(vision_content) - 1)
 
-    try:
-        async with session.post(
-            config.vision_url,
-            json=vision_body,
-            timeout=aiohttp.ClientTimeout(total=120),
-        ) as vision_resp:
-            log.info("%simage_agent: vision response status=%d", _r, vision_resp.status)
-            vision_data = await vision_resp.json()
-            if "error" in vision_data:
-                err_msg = vision_data["error"].get("message", str(vision_data["error"]))
-                log.error("%simage_agent: vision model ERROR: %s", _r, err_msg)
-                vision_text = f"[Vision analysis error: {err_msg}]"
-            else:
-                vision_text = vision_data["choices"][0]["message"]["content"]
-    except Exception as e:
-        log.error("%simage_agent: vision model call FAILED: %s", _r, e, exc_info=True)
-        vision_text = f"[Vision analysis failed: {e}]"
+    # Call vision model asynchronously, sending keepalive pings every 5s
+    # to prevent the client (Claude Code) from timing out during the silent gap
+    async def _do_vision_call():
+        try:
+            async with session.post(
+                config.vision_url,
+                json=vision_body,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as vision_resp:
+                log.info("%simage_agent: vision response status=%d", _r, vision_resp.status)
+                vision_data = await vision_resp.json()
+                if "error" in vision_data:
+                    err_msg = vision_data["error"].get("message", str(vision_data["error"]))
+                    log.error("%simage_agent: vision model ERROR: %s", _r, err_msg)
+                    return f"[Vision analysis error: {err_msg}]"
+                else:
+                    return vision_data["choices"][0]["message"]["content"]
+        except Exception as e:
+            log.error("%simage_agent: vision model call FAILED: %s", _r, e, exc_info=True)
+            return f"[Vision analysis failed: {e}]"
 
-    log.info("%simage_agent: Phase 2 DONE — vision response %d chars: %s...", _r, len(vision_text), vision_text[:300])
+    vision_task = asyncio.create_task(_do_vision_call())
+    ping_count = 0
+    while not vision_task.done():
+        done, _ = await asyncio.wait({vision_task}, timeout=5.0)
+        if not done:
+            ping_count += 1
+            log.debug("%simage_agent: keepalive ping #%d during vision call", _r, ping_count)
+            yield make_anthropic_sse("ping", {"type": "ping"})
+
+    vision_text = vision_task.result()
+    log.info("%simage_agent: Phase 2 DONE — vision response %d chars (%d pings sent): %s...",
+             _r, len(vision_text), ping_count, vision_text[:300])
 
     # Phase 3: Build follow-up request
     followup_body = dict(openai_body)

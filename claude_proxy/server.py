@@ -144,7 +144,6 @@ async def handle_messages(request: web.Request) -> web.StreamResponse:
         if resp.status != 200:
             error_body = await resp.text()
             log.error("[%s] Backend returned %d: %s", req_id, resp.status, error_body[:500])
-            count_task.cancel()
             return web.json_response(
                 {"type": "error", "error": {"type": "api_error", "message": error_body}},
                 status=resp.status,
@@ -243,7 +242,11 @@ async def handle_messages(request: web.Request) -> web.StreamResponse:
                 await response.write(chunk)
                 bytes_sent += len(chunk)
     except Exception as e:
-        log.error("[%s] Streaming error: %s", req_id, e, exc_info=True)
+        err_str = str(e).lower()
+        if "closing transport" in err_str or "connection reset" in err_str:
+            log.warning("[%s] Client disconnected during streaming: %s", req_id, e)
+        else:
+            log.error("[%s] Streaming error: %s", req_id, e, exc_info=True)
 
     log.info("[%s] <<< done, %d bytes sent", req_id, bytes_sent)
     await response.write_eof()
