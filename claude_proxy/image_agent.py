@@ -250,7 +250,11 @@ async def image_agent_stream(
     block_index = 0
 
     async def _intercepting_events() -> AsyncIterator[SSEEvent]:
-        """Yield OpenAI SSE events while tracking analyzeImage tool calls."""
+        """Yield OpenAI SSE events while tracking analyzeImage tool calls.
+
+        When analyzeImage is detected, its tool_call deltas are SUPPRESSED
+        from the stream so the client never sees them.
+        """
         nonlocal intercept
         async for event in first_events:
             if event.data == "[DONE]":
@@ -265,6 +269,7 @@ async def image_agent_stream(
 
             # Track tool calls
             choices = data.get("choices", [])
+            suppress = False
             if choices:
                 delta = choices[0].get("delta", {})
                 tool_calls = delta.get("tool_calls")
@@ -280,8 +285,10 @@ async def image_agent_stream(
                                      _r, intercept.tool_id, intercept.tool_openai_index)
                         if intercept.intercepting and tc.get("index", 0) == intercept.tool_openai_index:
                             intercept.arguments_buffer += func.get("arguments", "")
+                            suppress = True  # don't send analyzeImage deltas to client
 
-            yield event
+            if not suppress:
+                yield event
 
     # Emit message_start ourselves (we control the lifecycle)
     msg_id = _make_message_id()
@@ -406,18 +413,11 @@ async def image_agent_stream(
         "tool_call_id": intercept.tool_id,
     })
 
-    # Remove analyzeImage from tools to prevent recursive calls
-    orig_tool_count = len(followup_body.get("tools", []))
-    if "tools" in followup_body:
-        followup_body["tools"] = [
-            t for t in followup_body["tools"]
-            if t.get("function", {}).get("name") != "analyzeImage"
-        ]
-        if not followup_body["tools"]:
-            del followup_body["tools"]
-    new_tool_count = len(followup_body.get("tools", []))
-    log.info("%simage_agent: Phase 3 — follow-up built: %d msgs, tools %d→%d",
-             _r, len(followup_body["messages"]), orig_tool_count, new_tool_count)
+    # Keep analyzeImage in tools list (backend validates tool_calls against tools)
+    # but remove tool_choice to let model freely choose next action
+    followup_body.pop("tool_choice", None)
+    log.info("%simage_agent: Phase 3 — follow-up built: %d msgs, tools %d",
+             _r, len(followup_body["messages"]), len(followup_body.get("tools", [])))
 
     # Phase 4: Send follow-up to text model
     log.info("%simage_agent: Phase 4 — sending follow-up to backend", _r)

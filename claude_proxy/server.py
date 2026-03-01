@@ -106,6 +106,11 @@ async def handle_messages(request: web.Request) -> web.StreamResponse:
     # Convert Anthropic → OpenAI
     openai_body = convert_request(body)
 
+    # Force analyzeImage tool_choice when image agent is active
+    if use_image_agent and config.force_vision:
+        openai_body["tool_choice"] = {"type": "function", "function": {"name": "analyzeImage"}}
+        log.info("[%s]     force_vision: tool_choice set to analyzeImage", req_id)
+
     openai_msgs = openai_body.get("messages", [])
     log.info("[%s]     openai: %d msgs, model=%s, max_tokens=%s, tools=%d",
              req_id, len(openai_msgs), openai_body.get("model"),

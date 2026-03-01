@@ -10,6 +10,7 @@ class ProxyConfig:
     vision_url: str = ""
     vision_model: str = ""
     image_agent_enabled: bool = True
+    force_vision: bool = False           # force analyzeImage call on every image via tool_choice
     image_cache_max_size: int = 100
     image_cache_ttl: int = 300
     context_limit: int = 202752  # model max context length in tokens

@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--vision-model", default="", help="Vision model name (required with --vision-url)")
     parser.add_argument("--ttl", type=int, default=30, help="Backend detect cache TTL")
     parser.add_argument("--no-image-agent", action="store_true", help="Disable image agent")
+    parser.add_argument("--force-vision", action="store_true", help="Force analyzeImage on every image")
     parser.add_argument("--no-sort-tools", action="store_true", help="Disable tool sorting for KV cache")
     parser.add_argument("--no-strip-billing", action="store_true", help="Keep billing nonce in system prompt")
     parser.add_argument("--no-strip-cache-control", action="store_true", help="Keep cache_control fields")
@@ -40,6 +41,7 @@ def main():
         vision_url=args.vision_url,
         vision_model=args.vision_model,
         image_agent_enabled=bool(args.vision_url) and not args.no_image_agent,
+        force_vision=args.force_vision,
         sort_tools=not args.no_sort_tools,
         strip_billing_nonce=not args.no_strip_billing,
         strip_cache_control=not args.no_strip_cache_control,
@@ -50,7 +52,7 @@ def main():
 
     print(f"Claude proxy: {config.host}:{config.port} -> {config.backend_url}")
     print(f"Vision: {config.vision_url} ({config.vision_model})")
-    print(f"Image agent: {'enabled' if config.image_agent_enabled else 'disabled'}")
+    print(f"Image agent: {'enabled' if config.image_agent_enabled else 'disabled'}{' (force-vision)' if config.force_vision else ''}")
     print(f"Backend detect TTL: {config.backend_detect_ttl}s")
     norm_flags = [
         f"sort_tools={config.sort_tools}",
