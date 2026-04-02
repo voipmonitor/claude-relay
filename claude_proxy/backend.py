@@ -9,10 +9,14 @@ from .config import ProxyConfig
 log = logging.getLogger(__name__)
 
 
+DEFAULT_CONTEXT_LIMIT = 131072  # 128k fallback if backend doesn't report
+
+
 class BackendState:
     def __init__(self, ttl: int = 30):
         self.model: str | None = None
         self.backend_type: str | None = None  # "sglang" or "vllm"
+        self.context_limit: int = DEFAULT_CONTEXT_LIMIT
         self.last_check: float = 0
         self.ttl = ttl
 
@@ -24,6 +28,7 @@ class BackendState:
         return {
             "model": self.model,
             "backend_type": self.backend_type,
+            "context_limit": self.context_limit,
             "last_check_ago": f"{time.time() - self.last_check:.0f}s"
             if self.last_check
             else "never",
@@ -48,6 +53,9 @@ async def detect_backend(session: aiohttp.ClientSession, backend_url: str) -> Ba
             _state.model = model_info["id"]
             owned_by = model_info.get("owned_by", "").lower()
 
+            # Detect backend type and context limit from model info
+            max_model_len = model_info.get("max_model_len")  # vLLM includes this
+
             if "sglang" in owned_by:
                 _state.backend_type = "sglang"
             elif "vllm" in owned_by:
@@ -63,11 +71,29 @@ async def detect_backend(session: aiohttp.ClientSession, backend_url: str) -> Ba
                 except Exception:
                     _state.backend_type = "vllm"
 
+            # Query context limit from backend-specific endpoints
+            if max_model_len:
+                _state.context_limit = int(max_model_len)
+            elif _state.backend_type == "sglang":
+                try:
+                    async with session.get(
+                        f"{backend_url}/get_model_info",
+                        timeout=aiohttp.ClientTimeout(total=3),
+                    ) as r2:
+                        if r2.status == 200:
+                            info = await r2.json()
+                            ctx = info.get("max_total_num_tokens") or info.get("context_length")
+                            if ctx:
+                                _state.context_limit = int(ctx)
+                except Exception:
+                    pass  # keep default
+
             _state.last_check = time.time()
             log.info(
-                "backend=%s model=%s (cached %ds)",
+                "backend=%s model=%s context_limit=%d (cached %ds)",
                 _state.backend_type,
                 _state.model,
+                _state.context_limit,
                 _state.ttl,
             )
     except Exception as e:

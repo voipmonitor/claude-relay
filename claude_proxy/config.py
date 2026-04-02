@@ -13,7 +13,6 @@ class ProxyConfig:
     force_vision: bool = False           # force analyzeImage call on every image via tool_choice
     image_cache_max_size: int = 100
     image_cache_ttl: int = 300
-    context_limit: int = 202752  # model max context length in tokens
     min_completion_tokens: int = 4096  # minimum completion tokens to allow
     client_max_size: int = 200 * 1024 * 1024  # 200MB
     request_timeout: int = 1800  # 30 minutes
