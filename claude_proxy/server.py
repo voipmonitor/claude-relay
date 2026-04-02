@@ -187,7 +187,7 @@ async def handle_messages(request: web.Request) -> web.StreamResponse:
                                 context_overflow = True
                                 input_tokens = int(m.group(1))
                                 m2 = re.search(r"maximum context length of (\d+)", error_msg)
-                                ctx_limit = int(m2.group(1)) if m2 else config.context_limit
+                                ctx_limit = int(m2.group(1)) if m2 else get_state().context_limit
                                 break
                     except (json.JSONDecodeError, TypeError):
                         pass

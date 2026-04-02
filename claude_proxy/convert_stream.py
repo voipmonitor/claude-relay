@@ -120,6 +120,13 @@ async def convert_openai_stream_to_anthropic(
     event_count = 0
     thinking_chars = 0
     text_chars = 0
+    tools_finished = False  # set once finish_reason is received after tool calls
+    closed_blocks: set[int] = set()  # anthropic block indices that have been stopped
+
+    def _stop_block(idx: int) -> bytes:
+        """Emit content_block_stop and track the closure."""
+        closed_blocks.add(idx)
+        return _build_content_block_stop(idx)
 
     log.info("%sconvert_stream: start index_offset=%d skip_wrapper=%s", _r, index_offset, skip_message_wrapper)
 
@@ -160,6 +167,10 @@ async def convert_openai_stream_to_anthropic(
         delta = choice.get("delta", {})
         finish_reason = choice.get("finish_reason")
 
+        # Detect end-of-tools early so text gate opens for this same event
+        if finish_reason and tool_call_blocks and finish_reason != "tool_calls":
+            tools_finished = True
+
         # --- Thinking / reasoning_content ---
         reasoning = delta.get("reasoning_content") or ""
         if not reasoning:
@@ -199,25 +210,36 @@ async def convert_openai_stream_to_anthropic(
         text_content = delta.get("content")
         if text_content:
             text_chars += len(text_content)
-            # Close thinking block if still open
-            if thinking_started and current_index >= 0 and not text_started:
-                log.info("%sconvert_stream: closing thinking block idx=%d (%d chars total)", _r, current_index, thinking_chars)
-                yield _build_content_block_stop(current_index)
-                thinking_started = False  # prevent double-close in tool_calls section
 
-            if not text_started:
-                text_started = True
-                current_index = block_index
-                block_index += 1
-                log.info("%sconvert_stream: text block START idx=%d", _r, current_index)
-                yield _build_content_block_start(current_index, {
-                    "type": "text",
-                    "text": "",
+            # Skip separator text between tool calls (OpenAI models emit "\n"
+            # between tool_calls entries; the Anthropic protocol doesn't allow
+            # text blocks interleaved with tool_use blocks).
+            # Allow text through once tools are finished (non-tool finish_reason received).
+            if not tool_call_blocks or tools_finished:
+                # Close thinking block if still open
+                if thinking_started and current_index >= 0 and not text_started:
+                    log.info("%sconvert_stream: closing thinking block idx=%d (%d chars total)", _r, current_index, thinking_chars)
+                    yield _stop_block(current_index)
+                    thinking_started = False  # prevent double-close in tool_calls section
+
+                # Close current tool_use block if transitioning back to text
+                if tool_call_blocks and not text_started and current_index >= 0 and current_index not in closed_blocks:
+                    log.info("%sconvert_stream: closing tool_use idx=%d for text-after-tools", _r, current_index)
+                    yield _stop_block(current_index)
+
+                if not text_started:
+                    text_started = True
+                    current_index = block_index
+                    block_index += 1
+                    log.info("%sconvert_stream: text block START idx=%d", _r, current_index)
+                    yield _build_content_block_start(current_index, {
+                        "type": "text",
+                        "text": "",
+                    })
+                yield _build_content_block_delta(current_index, {
+                    "type": "text_delta",
+                    "text": text_content,
                 })
-            yield _build_content_block_delta(current_index, {
-                "type": "text_delta",
-                "text": text_content,
-            })
 
         # --- Tool calls ---
         tool_calls = delta.get("tool_calls")
@@ -225,13 +247,13 @@ async def convert_openai_stream_to_anthropic(
             # Close thinking if open and no text yet
             if thinking_started and not text_started and current_index >= 0:
                 log.info("%sconvert_stream: closing thinking for tool_calls idx=%d", _r, current_index)
-                yield _build_content_block_stop(current_index)
+                yield _stop_block(current_index)
                 thinking_started = False  # prevent double-close
 
             # Close text block if open
             if text_started:
                 log.info("%sconvert_stream: closing text for tool_calls idx=%d (%d chars total)", _r, current_index, text_chars)
-                yield _build_content_block_stop(current_index)
+                yield _stop_block(current_index)
                 text_started = False
 
             for tc in tool_calls:
@@ -239,6 +261,11 @@ async def convert_openai_stream_to_anthropic(
                 func = tc.get("function", {})
 
                 if tc_index not in tool_call_blocks:
+                    # Close previous tool_use block before starting the next
+                    if tool_call_blocks and current_index >= 0 and current_index not in closed_blocks:
+                        log.info("%sconvert_stream: closing tool_use block idx=%d before next", _r, current_index)
+                        yield _stop_block(current_index)
+
                     # New tool call — start block
                     tool_call_blocks[tc_index] = block_index
                     current_index = block_index
@@ -256,10 +283,14 @@ async def convert_openai_stream_to_anthropic(
                 anthropic_idx = tool_call_blocks[tc_index]
                 args_chunk = func.get("arguments", "")
                 if args_chunk:
-                    yield _build_content_block_delta(anthropic_idx, {
-                        "type": "input_json_delta",
-                        "partial_json": args_chunk,
-                    })
+                    if anthropic_idx in closed_blocks:
+                        log.warning("%sconvert_stream: late delta for closed block idx=%d (tc=%d), dropping",
+                                    _r, anthropic_idx, tc_index)
+                    else:
+                        yield _build_content_block_delta(anthropic_idx, {
+                            "type": "input_json_delta",
+                            "partial_json": args_chunk,
+                        })
 
         # --- Finish ---
         if finish_reason:
@@ -271,9 +302,9 @@ async def convert_openai_stream_to_anthropic(
             pending_usage = data["usage"] or {}
 
     # Close any open block
-    if current_index >= 0:
+    if current_index >= 0 and current_index not in closed_blocks:
         log.info("%sconvert_stream: closing final block idx=%d", _r, current_index)
-        yield _build_content_block_stop(current_index)
+        yield _stop_block(current_index)
 
     log.info("%sconvert_stream: end events=%d thinking=%d text=%d tools=%d stop=%s",
              _r, event_count, thinking_chars, text_chars, len(tool_call_blocks), pending_stop_reason)
