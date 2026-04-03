@@ -21,3 +21,4 @@ class ProxyConfig:
     strip_billing_nonce: bool = True     # remove x-anthropic-billing-header from system
     strip_cache_control: bool = True     # remove cache_control fields (unused by sglang/vLLM)
     strip_date_injection: bool = True    # remove "Today's date is YYYY-MM-DD." from user msgs
+    dump_requests: bool = False          # dump request bodies to debug/ directory

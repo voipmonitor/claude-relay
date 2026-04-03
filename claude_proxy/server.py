@@ -86,14 +86,15 @@ async def handle_messages(request: web.Request) -> web.StreamResponse:
     )
     log.info("[%s]     last_msgs: %s", req_id, _summarize_messages(msgs))
 
-    # Dump full request body for debugging
-    try:
-        debug_file = os.path.join(DEBUG_DIR, f"{req_id}_anthropic.json")
-        with open(debug_file, "w") as f:
-            json.dump(body, f, indent=2, ensure_ascii=False, default=str)
-        log.info("[%s]     dumped anthropic body to %s", req_id, debug_file)
-    except Exception as e:
-        log.warning("[%s]     failed to dump body: %s", req_id, e)
+    # Dump full request body for debugging (opt-in via --dump-requests)
+    if config.dump_requests:
+        try:
+            debug_file = os.path.join(DEBUG_DIR, f"{req_id}_anthropic.json")
+            with open(debug_file, "w") as f:
+                json.dump(body, f, indent=2, ensure_ascii=False, default=str)
+            log.info("[%s]     dumped anthropic body to %s", req_id, debug_file)
+        except Exception as e:
+            log.warning("[%s]     failed to dump body: %s", req_id, e)
 
     if use_image_agent:
         strip_and_cache_images(body, session_id)
@@ -117,14 +118,14 @@ async def handle_messages(request: web.Request) -> web.StreamResponse:
              openai_body.get("max_completion_tokens"),
              len(openai_body.get("tools", [])))
 
-    # Dump converted OpenAI body for debugging
-    try:
-        debug_file = os.path.join(DEBUG_DIR, f"{req_id}_openai.json")
-        with open(debug_file, "w") as f:
-            json.dump(openai_body, f, indent=2, ensure_ascii=False, default=str)
-        log.info("[%s]     dumped openai body to %s", req_id, debug_file)
-    except Exception as e:
-        log.warning("[%s]     failed to dump openai body: %s", req_id, e)
+    if config.dump_requests:
+        try:
+            debug_file = os.path.join(DEBUG_DIR, f"{req_id}_openai.json")
+            with open(debug_file, "w") as f:
+                json.dump(openai_body, f, indent=2, ensure_ascii=False, default=str)
+            log.info("[%s]     dumped openai body to %s", req_id, debug_file)
+        except Exception as e:
+            log.warning("[%s]     failed to dump openai body: %s", req_id, e)
 
     # Count input tokens via tiktoken for message_start
     input_token_count = len(_get_tiktoken().encode(_serialize_for_counting(body)))
