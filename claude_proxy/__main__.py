@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--no-strip-billing", action="store_true", help="Keep billing nonce in system prompt")
     parser.add_argument("--no-strip-cache-control", action="store_true", help="Keep cache_control fields")
     parser.add_argument("--no-strip-date", action="store_true", help="Keep date injection in user messages")
+    parser.add_argument("--dump-requests", action="store_true", help="Dump request bodies to debug/ directory")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -46,6 +47,7 @@ def main():
         strip_billing_nonce=not args.no_strip_billing,
         strip_cache_control=not args.no_strip_cache_control,
         strip_date_injection=not args.no_strip_date,
+        dump_requests=args.dump_requests,
     )
 
     init_state(config.backend_detect_ttl)
