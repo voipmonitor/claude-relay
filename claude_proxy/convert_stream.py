@@ -172,9 +172,10 @@ async def convert_openai_stream_to_anthropic(
             tools_finished = True
 
         # --- Thinking / reasoning_content ---
-        reasoning = delta.get("reasoning_content") or ""
+        # vLLM with --reasoning-parser glm45 emits `reasoning`; others use
+        # `reasoning_content`; some backends nest under `thinking.content`.
+        reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
         if not reasoning:
-            # Some backends use delta.thinking.content
             thinking_obj = delta.get("thinking")
             if isinstance(thinking_obj, dict):
                 reasoning = thinking_obj.get("content", "")

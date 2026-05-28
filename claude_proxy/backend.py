@@ -129,10 +129,14 @@ async def send_to_backend(
 
     openai_body["model"] = state.model
 
-    if state.backend_type == "sglang":
+    # Preserved Thinking for multi-turn (Claude Code / agentic flows on GLM-4.5+ etc.)
+    # Both sglang and vLLM honor chat_template_kwargs for thinking models — without
+    # clear_thinking=False the chat template strips <think> blocks from prior turns,
+    # which breaks Preserved Thinking. setdefault() lets per-request overrides win.
+    if state.backend_type in ("sglang", "vllm"):
         kwargs = openai_body.setdefault("chat_template_kwargs", {})
-        kwargs["enable_thinking"] = True
-        kwargs["clear_thinking"] = False
+        kwargs.setdefault("enable_thinking", True)
+        kwargs.setdefault("clear_thinking", False)
 
     # Request usage stats in streaming mode so we can report token counts to Claude Code
     if openai_body.get("stream"):

@@ -76,7 +76,11 @@ async def handle_messages(request: web.Request) -> web.StreamResponse:
         len(b.get("text", "")) for b in body.get("system", []) if isinstance(b, dict)
     )
     thinking = body.get("thinking", {})
-    thinking_info = f"budget={thinking.get('budget_tokens')}" if thinking.get("type") == "enabled" else "off"
+    thinking_info = (
+        f"{thinking.get('type')}(budget={thinking.get('budget_tokens')})"
+        if thinking.get("type") in ("enabled", "adaptive")
+        else "off"
+    )
 
     log.info(
         "[%s] >>> POST /v1/messages msgs=%d tools=%d(%s) system=%d thinking=%s image_agent=%s",

@@ -134,7 +134,7 @@ def _convert_assistant_message(msg: dict) -> dict:
 
     text_parts = []
     tool_calls = []
-    thinking = None
+    reasoning_parts = []
 
     for block in content:
         btype = block.get("type")
@@ -153,17 +153,17 @@ def _convert_assistant_message(msg: dict) -> dict:
             })
 
         elif btype == "thinking":
-            thinking = {
-                "content": block.get("thinking", ""),
-                "signature": block.get("signature", ""),
-            }
+            # GLM-5/5.1 (and other vLLM/sglang reasoning-parser backends) read prior
+            # assistant reasoning from message["reasoning_content"] -- this is what
+            # the Jinja chat template uses for Preserved Thinking across multi-turn.
+            reasoning_parts.append(block.get("thinking", ""))
 
     if text_parts:
         result["content"] = "\n".join(text_parts)
     if tool_calls:
         result["tool_calls"] = tool_calls
-    if thinking:
-        result["thinking"] = thinking
+    if reasoning_parts:
+        result["reasoning_content"] = "\n".join(p for p in reasoning_parts if p)
 
     return result
 
@@ -241,9 +241,9 @@ def convert_request(body: dict) -> dict:
     if "stop_sequences" in body:
         openai_body["stop"] = body["stop_sequences"]
 
-    # Extended thinking
+    # Extended thinking (Claude Code sends both "enabled" and "adaptive")
     thinking = body.get("thinking")
-    if thinking and thinking.get("type") == "enabled":
+    if thinking and thinking.get("type") in ("enabled", "adaptive"):
         thinking_params = _convert_thinking(thinking)
         openai_body.update(thinking_params)
 
