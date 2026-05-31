@@ -1,0 +1,23 @@
+[Unit]
+Description=Claude Relay
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jon
+Group=jon
+WorkingDirectory=/home/jon/git/claude-relay
+Environment="PATH=/home/jon/.venvs/vllm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="VIRTUAL_ENV=/home/jon/.venvs/vllm"
+ExecStart=/home/jon/.venvs/vllm/bin/python -m claude_relay --backend http://localhost:8000 --tool-debug --dump-requests
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claude-relay
+
+[Install]
+WantedBy=multi-user.target

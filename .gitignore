@@ -8,4 +8,9 @@ build/
 *.egg
 .venv/
 venv/
-claude_proxy/debug/*.json
+.claude/
+.omc/
+HANDOVER.md
+claude_relay/debug/*
+!claude_relay/debug/.gitkeep
+claude_proxy/debug/*

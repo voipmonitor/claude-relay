@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-relay"
+version = "0.1.0"
+description = "Proxy that translates Claude Code API calls to OpenAI-compatible backends (vLLM, sglang)"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.9",
+    "tiktoken>=0.7",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.scripts]
+claude-relay = "claude_relay.__main__:main"
+claude-proxy = "claude_relay.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["claude_relay*", "claude_proxy*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

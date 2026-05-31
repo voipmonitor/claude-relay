@@ -19,10 +19,10 @@ cd claude-relay
 pip install -r requirements.txt
 
 # Minimal -- text-only, no vision
-python -m claude_proxy --backend http://localhost:30000
+python -m claude_relay --backend http://localhost:30000
 
 # With vision routing
-python -m claude_proxy \
+python -m claude_relay \
   --backend http://localhost:30000 \
   --vision-url http://localhost:8000/v1/chat/completions \
   --vision-model Qwen2.5-VL-72B
@@ -38,12 +38,14 @@ claude
 ## Command-line options
 
 ```
-Usage: python -m claude_proxy [OPTIONS]
+Usage: python -m claude_relay [OPTIONS]
 
 Server:
   --host HOST               Listen address (default: 0.0.0.0)
   --port PORT               Listen port (default: 5021)
+  --config PATH             TOML config file
   --backend URL             sglang/vLLM backend URL (default: http://localhost:30000)
+  --model-route SPEC        Per-model backend route: MODEL=URL[,UPSTREAM_MODEL]
   --ttl SECONDS             Backend auto-detection cache TTL (default: 30)
   --log-level LEVEL         Logging level (default: INFO)
 
@@ -57,7 +59,89 @@ KV cache normalization (all enabled by default):
   --no-strip-billing        Keep x-anthropic-billing-header in system prompt
   --no-strip-cache-control  Keep cache_control fields (unused by sglang/vLLM)
   --no-strip-date           Keep "Today's date is YYYY-MM-DD." in user messages
+
+Diagnostics:
+  --dump-requests           Write Anthropic and converted OpenAI JSON bodies to claude_relay/debug/
+  --tool-debug              For requests with tools, write raw backend SSE and a tool-call summary
+  --request-timeout SEC     Total backend request timeout
+  --sock-read-timeout SEC   Max silent period between backend chunks
 ```
+
+## Model Routing
+
+By default every request goes to `--backend`, and the relay still probes that backend's `/v1/models` endpoint to find the actual upstream model name. To send specific client-facing model names to different backends, add model routes:
+
+```bash
+python -m claude_relay \
+  --backend http://localhost:8000 \
+  --model-route 'claude-3-5-sonnet-20241022=http://localhost:8000,Qwen3.5' \
+  --model-route 'claude-opus-*=http://localhost:8001,Kimi-K2.6'
+```
+
+Routes are matched against the incoming Anthropic `model` field. Exact matches win first; route names containing `*`, `?`, or `[` are treated as glob patterns. The optional `UPSTREAM_MODEL` overrides the model name sent to that backend. If omitted, the relay uses that backend's first `/v1/models` result, preserving the old behavior.
+
+You can also put routes in a TOML config file:
+
+```toml
+backend_url = "http://localhost:8000"
+backend_detect_ttl = 30
+tool_debug = true
+dump_requests = true
+dump_responses = true
+
+[model_routes."claude-3-5-sonnet-20241022"]
+backend_url = "http://localhost:8000"
+upstream_model = "Qwen3.5"
+
+[model_routes."claude-opus-*"]
+backend_url = "http://localhost:8001"
+upstream_model = "Kimi-K2.6"
+```
+
+Start it with:
+
+```bash
+python -m claude_relay --config ~/.config/claude-relay/config.toml
+```
+
+For compatibility with `resp2chat` naming, `[model_profiles]` is accepted as an alias for `[model_routes]` in this relay config.
+
+## Tool calling diagnostics
+
+For GLM/vLLM tool-call issues, run the relay with request and tool debugging enabled:
+
+```bash
+python -m claude_relay \
+  --backend http://localhost:8000 \
+  --dump-requests \
+  --dump-responses \
+  --tool-debug
+```
+
+When installed as `claude-relay.service`, the same flags belong on `ExecStart`. Then watch:
+
+```bash
+journalctl -u claude-relay.service -f
+ls -lt claude_relay/debug/
+```
+
+Each tool request writes:
+
+- `*_anthropic.json` - the original Claude/Anthropic request
+- `*_openai.json` - the converted OpenAI-compatible request sent to vLLM/sglang
+- `*_anthropic_stream.sse` - exact Anthropic SSE bytes sent back to the client
+- `*_backend_stream.ndjson` - raw backend SSE chunks
+- `*_tool_debug.json` - parsed tool-call diagnostics, including `finish_reasons`, `delta_keys`, assembled tool arguments, and JSON validity
+
+You can also run a direct backend-vs-proxy smoke test:
+
+```bash
+python scripts/diagnose_tool_calls.py \
+  --backend http://localhost:8000 \
+  --proxy http://localhost:5021
+```
+
+The script sends a forced `get_weather` tool call to both endpoints and writes a `*_tool_diagnosis.json` report under `claude_relay/debug/`.
 
 ## How it works
 
@@ -200,7 +284,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/claude-relay
-ExecStart=/opt/claude-relay/.venv/bin/python -m claude_proxy \
+ExecStart=/opt/claude-relay/.venv/bin/python -m claude_relay \
     --backend http://localhost:30000 \
     --port 5021
 Restart=always
@@ -209,7 +293,7 @@ StandardOutput=journal
 StandardError=journal
 
 # Optional: uncomment and adjust for vision routing
-# ExecStart=/opt/claude-relay/.venv/bin/python -m claude_proxy \
+# ExecStart=/opt/claude-relay/.venv/bin/python -m claude_relay \
 #     --backend http://localhost:30000 \
 #     --vision-url http://localhost:8000/v1/chat/completions \
 #     --vision-model Qwen2.5-VL-72B \
@@ -228,10 +312,10 @@ systemctl enable claude-relay
 systemctl start claude-relay
 
 # Check status
-systemctl status claude-relay
+systemctl status claude-relay.service
 
 # View logs
-journalctl -u claude-relay -f
+journalctl -u claude-relay.service -f
 ```
 
 ### 4. Configure Claude Code
@@ -258,7 +342,7 @@ export ANTHROPIC_BASE_URL=http://your-server:5021
 
 ## Debugging
 
-Request bodies are dumped to `claude_proxy/debug/` as JSON files:
+Request bodies are dumped to `claude_relay/debug/` as JSON files:
 - `{req_id}_anthropic.json` -- original Anthropic request
 - `{req_id}_openai.json` -- converted OpenAI request
 
